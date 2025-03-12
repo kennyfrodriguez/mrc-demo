@@ -21,7 +21,21 @@ The program dashboard should be a platform that allows for the user to enage wit
 The Vendor Dashboard:
 Archived Bids, submitted bids, and awarded contracts.
 + The ability to submit a bid and/or view details on exisiting bids.
-+ the ability to search and filter down.
++ the ability to search and filter down
+- Upcoming Edit:
+1.) Load File - Done 
+2.) Insert into MRCTransform - Dones
+2.) Presents parsed information - Retrived from MRCTransform
+3.) Trigger notification system
+3) Sends Email out for Bid with embedded link
+4.) Link is secured and data-driven by particular vendor
+4.) Allows the Vendor to enter a bid amount 
+4.) Upon the vendor having entered a bid it uploads to the mybids table. 
+4.)mybid table is linked to MRCBidResults
+5.) Bid amount is then stored in DB and is then presented in UI. 
+
+---
+It is important that this data is properly fomratted and that we can effectively submit a bid.
 
 The forum page:
 A place to illustrate --

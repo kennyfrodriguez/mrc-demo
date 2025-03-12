@@ -169,10 +169,12 @@ const parseStandardFieldsFromText = (text: string, formData: FormData) => {
 
       let value = valueParts.join(':').trim()
       
-      // Skip broker-related fields
+      // Skip broker-related fields and standalone time entries in schedule section
       if (key.toLowerCase().includes('broker') ||
           key.toLowerCase().includes('hst') ||
-          key.toLowerCase().includes('mart')) {
+          key.toLowerCase().includes('mart') ||
+          // Skip standalone time entries in schedule section
+          (currentSection.letter === 'E' && /^\d{1,2}$/.test(key) && value.match(/^\d{2}(:|\.)\d{2}\s*(AM|PM)$/i))) {
         continue
       }
 
@@ -301,10 +303,19 @@ const processConsumersSchedule = async (html: string, formData: FormData) => {
   let schedule: DaySchedule[]
   try {
     schedule = await extractScheduleFromHTML(html)
+    console.log('[Scanner] Extracted schedule:', schedule)
   } catch (error) {
     console.warn(error)
     return
   }
+
+  // Remove any existing schedule fields that might cause duplication
+  formData.fields = formData.fields.filter(field => 
+    !field.label.includes('Program Arrival Time') && 
+    !field.label.includes('Program Departure Time') &&
+    !field.label.includes('Program Arrival Dates') &&
+    !field.label.includes('Program Departure Dates')
+  );
 
   const arrivalPairs: string[] = []
   const departurePairs: string[] = []
@@ -312,15 +323,29 @@ const processConsumersSchedule = async (html: string, formData: FormData) => {
   schedule.forEach(s => {
     const fullDayName = DAY_MAP[s.day] || s.day
     if (s.arrivalTime && s.arrivalTime.toUpperCase() !== 'N/A') {
-      arrivalPairs.push(`${fullDayName},${s.arrivalTime}`)
+      // Ensure time format is correct
+      const cleanTime = s.arrivalTime.trim()
+      console.log(`[Scanner] Processing arrival time for ${fullDayName}:`, cleanTime)
+      // Push day and time separately
+      arrivalPairs.push(fullDayName, cleanTime)
     }
     if (s.departureTime && s.departureTime.toUpperCase() !== 'N/A') {
-      departurePairs.push(`${fullDayName},${s.departureTime}`)
+      // Ensure time format is correct
+      const cleanTime = s.departureTime.trim()
+      console.log(`[Scanner] Processing departure time for ${fullDayName}:`, cleanTime)
+      // Push day and time separately
+      departurePairs.push(fullDayName, cleanTime)
     }
   })
 
-  const arrivalValue = arrivalPairs.length > 0 ? arrivalPairs.join(' ') : 'N/A'
-  const departureValue = departurePairs.length > 0 ? departurePairs.join(' ') : 'N/A'
+  // Join all pairs with semicolons
+  const arrivalValue = arrivalPairs.length > 0 ? arrivalPairs.join(';') : 'N/A'
+  const departureValue = departurePairs.length > 0 ? departurePairs.join(';') : 'N/A'
+
+  console.log('[Scanner] Final schedule values:', {
+    arrivalValue,
+    departureValue
+  });
 
   formData.fields.push({
     key: `program_arrival_dates`,
@@ -400,26 +425,74 @@ export default function Page() {
 
   const handleFinalSubmit = async () => {
     try {
-      if (!formData?.fields.length) {
-        alert('Form fields are required')
-        return
+      const submissionId = `sub_${Date.now()}`;
+      console.log(`[Form Submission ${submissionId}] Starting submission...`);
+      
+      // Check if we have form fields
+      if (!formData.fields || formData.fields.length === 0) {
+        throw new Error('No form fields to submit');
       }
+      
+      setIsParsing(true);
+      console.log(`[Form Submission ${submissionId}] Preparing API request...`);
 
-      setIsParsing(true)
+      // Submit form data to API
+      const response = await fetch('/api/submit-form', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          fields: formData.fields,
+          submissionId
+        }),
+      });
       
-      // ... rest of the submit logic ...
+      console.log(`[Form Submission ${submissionId}] API response received:`, {
+        status: response.status,
+        statusText: response.statusText
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(`Server error: ${errorData.message || response.statusText}`);
+      }
       
-      alert('Saved successfully!')
-      setShowSummary(false)
-      setCurrentStep('complete')
-      window.location.href = '/tools/scanner/submissions'
+      const data = await response.json();
+      console.log(`[Form Submission ${submissionId}] Submission successful:`, data);
+      
+      if (!data.success) {
+        throw new Error(data.message || 'Failed to submit form');
+      }
+      
+      console.log(`[Form Submission ${submissionId}] Processing complete, showing success state`);
+      setIsParsing(false);
+      setCurrentStep('complete');
+      
+      // Redirect to submissions page with success state
+      const redirectUrl = new URL('/tools/submissions', window.location.origin);
+      redirectUrl.searchParams.set('success', 'true');
+      redirectUrl.searchParams.set('submissionId', submissionId);
+      window.location.href = redirectUrl.toString();
+
     } catch (error: any) {
-      console.error('Save error:', error)
-      alert(`Failed to save: ${error.message || 'Unknown error'}`)
-    } finally {
-      setIsParsing(false)
+      const errorDetails = {
+        submissionId: 'sub_' + Date.now(),
+        message: error.message || 'Unknown error occurred',
+        name: error.name,
+        stack: error.stack,
+        cause: error.cause,
+        timestamp: new Date().toISOString()
+      };
+
+      console.error(`[Form Submission ${errorDetails.submissionId}] Error:`, 
+        JSON.stringify(errorDetails, null, 2)
+      );
+      
+      // Show user-friendly error message
+      alert(`Failed to save form: ${errorDetails.message}`);
     }
-  }
+  };
 
   const renderForm = () => {
     switch (currentStep) {
@@ -494,9 +567,11 @@ export default function Page() {
                   </div>
                   <div className="h-2 w-full bg-muted rounded-full overflow-hidden border mb-6">
                     <div 
-                      className={`h-full bg-accent transition-all duration-300 origin-left ${
-                        `scale-x-[${sectionIndex / 6}]`
-                      }`}
+                      className="h-full transition-all duration-300"
+                      style={{
+                        width: `${Math.round((sectionIndex / 6) * 100)}%`,
+                        background: `linear-gradient(to right, var(--accent), var(--destructive))`,
+                      }}
                     />
                   </div>
                   <div className="flex flex-wrap gap-3">
@@ -769,7 +844,15 @@ function SummaryPopup({ formData, onClose, onSubmit }: {
               <h3 className="font-medium text-foreground mb-2">Section {section.letter}: {section.title}</h3>
               <div className="space-y-2">
                 {formData.fields
-                  .filter(field => field.section?.includes(`(${section.letter})`))
+                  .filter(field => {
+                    // Only show Program Arrival/Departure Dates for section E
+                    if (section.letter === 'E') {
+                      return field.section?.includes(`(${section.letter})`) && 
+                             (field.label === 'Program Arrival Dates' || 
+                              field.label === 'Program Departure Dates');
+                    }
+                    return field.section?.includes(`(${section.letter})`);
+                  })
                   .map(field => (
                     <div key={field.key} className="grid grid-cols-2 gap-2">
                       <span className="text-muted-foreground">{field.label}:</span>

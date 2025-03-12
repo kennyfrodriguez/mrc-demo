@@ -77,7 +77,7 @@ export default function ResourcesPage() {
               
               <ToolCard
                 icon={HelpCircle}
-                title="Help Needed?"
+                title="Communication"
                 description="Access support resources and documentation"
                 href="/forum"
               />

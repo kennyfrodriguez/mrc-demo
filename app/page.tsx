@@ -40,7 +40,7 @@ export default function Home() {
                 Select a portal above to get started
               </p>
             </div>
-          </main>
+          </main> 
         </div>
       </div>
     </div>
